@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EMBER — Fire & Disaster Recovery Command</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: {
+        display: ['Outfit', 'sans-serif'],
+        mono: ['JetBrains Mono', 'monospace'],
+      },
+      colors: {
+        ember: { 50:'#fff7ed', 100:'#ffedd5', 200:'#fed7aa', 300:'#fdba74', 400:'#fb923c', 500:'#f97316', 600:'#ea580c', 700:'#c2410c', 800:'#9a3412', 900:'#7c2d12' },
+        slate: { 850:'#141c2b', 900:'#0f172a', 950:'#080d19' },
+      }
+    }
+  }
+}
+</script>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Outfit', sans-serif; background: #080d19; }
+  .font-mono { font-family: 'JetBrains Mono', monospace; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: #0f172a; }
+  ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 8px; }
+
+  /* Pulse ring for live indicators */
+  @keyframes pulseRing {
+    0% { transform: scale(1); opacity: 1; }
+    100% { transform: scale(2.5); opacity: 0; }
+  }
+  .pulse-ring::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    border: 2px solid currentColor;
+    animation: pulseRing 1.5s ease-out infinite;
+  }
+
+  /* Feed entry slide-in */
+  @keyframes slideIn {
+    from { transform: translateX(-20px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  .feed-enter { animation: slideIn 0.4s ease-out forwards; }
+
+  /* Severity bar glow */
+  @keyframes severityPulse {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+  }
+  .severity-critical { animation: severityPulse 1.2s ease-in-out infinite; }
+
+  /* Modal backdrop */
+  .modal-backdrop {
+    background: rgba(8, 13, 25, 0.85);
+    backdrop-filter: blur(12px);
+  }
+
+  /* Modal enter */
+  @keyframes modalIn {
+    from { transform: scale(0.95) translateY(20px); opacity: 0; }
+    to { transform: scale(1) translateY(0); opacity: 1; }
+  }
+  .modal-enter { animation: modalIn 0.35s ease-out forwards; }
+
+  /* Grid scan line */
+  @keyframes scanLine {
+    0% { top: 0; }
+    100% { top: 100%; }
+  }
+  .scan-line::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(249,115,22,0.3), transparent);
+    animation: scanLine 4s linear infinite;
+  }
+
+  /* Status badge pulse */
+  @keyframes statusPulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(249,115,22,0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(249,115,22,0); }
+  }
+  .status-active { animation: statusPulse 2s ease-in-out infinite; }
+
+  /* Noise overlay */
+  .noise-bg {
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  }
+
+  /* Card hover */
+  .card-hover { transition: all 0.25s ease; }
+  .card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px rgba(249,115,22,0.08);
+    border-color: rgba(249,115,22,0.3);
+  }
+
+  /* Tag styling */
+  .tag-fire { background: rgba(239,68,68,0.15); color: #fca5a5; border: 1px solid rgba(239,68,68,0.25); }
+  .tag-flood { background: rgba(59,130,246,0.15); color: #93c5fd; border: 1px solid rgba(59,130,246,0.25); }
+  .tag-storm { background: rgba(168,85,247,0.15); color: #d8b4fe; border: 1px solid rgba(168,85,247,0.25); }
+  .tag-earthquake { background: rgba(234,179,8,0.15); color: #fde047; border: 1px solid rgba(234,179,8,0.25); }
+  .tag-tornado { background: rgba(20,184,166,0.15); color: #5eead4; border: 1px solid rgba(20,184,166,0.25); }
+
+  .progress-bar {
+    background: linear-gradient(90deg, #ea580c, #f97316, #fb923c);
+    background-size: 200% 100%;
+    animation: shimmer 2s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+</style>
+</head>
+<body class="min-h-screen text-white noise-bg overflow-x-hidden">
+
+<!-- TOP BAR -->
+<header class="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-xl">
+  <div class="flex items-center justify-between px-6 py-3">
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-ember-500 to-red-600 flex items-center justify-center shadow-lg shadow-ember-500/20">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z"/></svg>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold tracking-tight leading-none">EMBER</h1>
+          <p class="text-[10px] font-mono text-slate-500 tracking-widest uppercase">Recovery Command</p>
+        </div>
+      </div>
+      <div class="h-8 w-px bg-slate-800 mx-2"></div>
+      <div class="flex items-center gap-2">
+        <div class="relative w-2 h-2 rounded-full bg-emerald-400 pulse-ring text-emerald-400"></div>
+        <span class="text-xs font-mono text-emerald-400">LIVE FEED</span>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <div class="hidden md:flex items-center gap-2 bg-slate-900/80 rounded-lg border border-slate-800 px-3 py-1.5">
+        <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <input id="searchInput" type="text" placeholder="Search address, contact..." class="bg-transparent text-sm text-slate-300 placeholder-slate-600 outline-none w-48 font-mono text-xs">
+      </div>
+      <div class="text-right">
+        <div class="text-xs font-mono text-slate-400" id="currentTime"></div>
+        <div class="text-[10px] font-mono text-slate-600" id="currentDate"></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- MAIN LAYOUT -->
+<div class="flex h-[calc(100vh-57px)]">
+
+  <!-- LEFT SIDEBAR — LIVE FEED -->
+  <aside class="w-80 min-w-[320px] border-r border-slate-800/80 flex flex-col bg-slate-950/50 relative scan-line overflow-hidden">
+    <div class="px-4 py-3 border-b border-slate-800/60 flex items-center justify-between flex-shrink-0">
+      <h2 class="text-xs font-mono font-bold text-slate-400 tracking-widest uppercase">Incoming Reports</h2>
+      <span class="text-[10px] font-mono bg-ember-500/20 text-ember-400 px-2 py-0.5 rounded-full border border-ember-500/30" id="feedCount">0 active</span>
+    </div>
+    <div id="liveFeed" class="flex-1 overflow-y-auto p-3 space-y-2"></div>
+  </aside>
+
+  <!-- CENTER — DASHBOARD -->
+  <main class="flex-1 overflow-y-auto p-6">
+
+    <!-- STATS ROW -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div class="bg-slate-900/60 border border-slate-800/60 rounded-xl p-4">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-7 h-7 rounded-lg bg-red-500/10 flex items-center justify-center">
+            <svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z"/></svg>
+          </div>
+          <span class="text-[10px] font-mono text-slate-500 tracking-wider uppercase">Active Incidents</span>
+        </div>
+        <div class="text-3xl font-bold text-white" id="statActive">0</div>
+        <div class="text-[10px] font-mono text-red-400 mt-1">▲ 3 in last hour</div>
+      </div>
+
+      <div class="bg-slate-900/60 border border-slate-800/60 rounded-xl p-4">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-7 h-7 rounded-lg bg-ember-500/10 flex items-center justify-center">
+            <svg class="w-4 h-4 text-ember-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3H21"/></svg>
+          </div>
+          <span class="text-[10px] font-mono text-slate-500 tracking-wider uppercase">Properties</span>
+        </div>
+        <div class="text-3xl font-bold text-white" id="statProperties">0</div>
+        <div class="text-[10px] font-mono text-slate-400 mt-1">Residential & Commercial</div>
+      </div>
+
+      <div class="bg-slate-900/60 border border-slate-800/60 rounded-xl p-4">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+          <span class="text-[10px] font-mono text-slate-500 tracking-wider uppercase">Recovery Ops</span>
+        </div>
+        <div class="text-3xl font-bold text-white" id="statOps">8</div>
+        <div class="text-[10px] font-mono text-emerald-400 mt-1">● 5 in progress</div>
+      </div>
+
+      <div class="bg-slate-900/60 border border-slate-800/60 rounded-xl p-4">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center">
+            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/></svg>
+          </div>
+          <span class="text-[10px] font-mono text-slate-500 tracking-wider uppercase">Crew Deployed</span>
+        </div>
+        <div class="text-3xl font-bold text-white">24</div>
+        <div class="text-[10px] font-mono text-blue-400 mt-1">6 teams on site</div>
+      </div>
+    </div>
+
+    <!-- MAIN PROPERTY TABLE -->
+    <div class="bg-slate-900/40 border border-slate-800/60 rounded-xl overflow-hidden mb-6">
+      <div class="px-5 py-3 border-b border-slate-800/60 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-slate-300 tracking-wide">Affected Properties</h2>
+        <div class="flex items-center gap-2">
+          <button onclick="filterBy('all')" class="filter-btn active text-[10px] font-mono px-3 py-1 rounded-md bg-slate-800 text-slate-300 hover:bg-slate-700 transition" data-filter="all">All</button>
+          <button onclick="filterBy('fire')" class="filter-btn text-[10px] font-mono px-3 py-1 rounded-md bg-slate-800/50 text-slate-500 hover:bg-slate-700 transition" data-filter="fire">Fire</button>
+          <button onclick="filterBy('flood')" class="filter-btn text-[10px] font-mono px-3 py-1 rounded-md bg-slate-800/50 text-slate-500 hover:bg-slate-700 transition" data-filter="flood">Flood</button>
+          <button onclick="filterBy('storm')" class="filter-btn text-[10px] font-mono px-3 py-1 rounded-md bg-slate-800/50 text-slate-500 hover:bg-slate-700 transition" data-filter="storm">Storm</button>
+          <button onclick="filterBy('earthquake')" class="filter-btn text-[10px] font-mono px-3 py-1 rounded-md bg-slate-800/50 text-slate-500 hover:bg-slate-700 transition" data-filter="earthquake">Quake</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full">
+          <thead>
+            <tr class="text-[10px] font-mono text-slate-500 tracking-widest uppercase border-b border-slate-800/40">
+              <th class="text-left px-5 py-2.5">Severity</th>
+              <th class="text-left px-5 py-2.5">Address</th>
+              <th class="text-left px-5 py-2.5">Type</th>
+              <th class="text-left px-5 py-2.5">Contact</th>
+              <th class="text-left px-5 py-2.5">Status</th>
+              <th class="text-left px-5 py-2.5">Reported</th>
+            </tr>
+          </thead>
+          <tbody id="propertyTable"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- BOTTOM ROW -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <!-- Severity Breakdown -->
+      <div class="bg-slate-900/40 border border-slate-800/60 rounded-xl p-5">
+        <h3 class="text-xs font-mono font-bold text-slate-400 tracking-widest uppercase mb-4">Severity Breakdown</h3>
+        <div class="space-y-3" id="severityBars"></div>
+      </div>
+
+      <!-- Recent Activity -->
+      <div class="bg-slate-900/40 border border-slate-800/60 rounded-xl p-5">
+        <h3 class="text-xs font-mono font-bold text-slate-400 tracking-widest uppercase mb-4">Recovery Timeline</h3>
+        <div class="space-y-3" id="activityLog"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- MODAL -->
+<div id="modal" class="fixed inset-0 z-50 hidden items-center justify-center modal-backdrop" onclick="if(event.target===this)closeModal()">
+  <div class="modal-enter bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto shadow-2xl shadow-black/50 mx-4" id="modalContent"></div>
+</div>
+
+<script>
+// ─── SIMULATED DATA ─────────────────────────────────────────────────────
+const DISASTER_TYPES = ['fire','flood','storm','earthquake','tornado'];
+const STATUSES = ['Pending Assessment','Assessment Complete','Recovery In Progress','Cleanup Active','Restoration Underway','Monitoring'];
+const SEVERITY = ['Low','Moderate','High','Critical'];
+
+const PROPERTIES = [
+  {
+    id: 1, address: '742 Evergreen Terrace, Springfield, IL 62704', type: 'fire', severity: 'Critical',
+    status: 'Recovery In Progress', reported: '2026-03-13T06:12:00',
+    contact: { name: 'Margaret Chen', phone: '(217) 555-0142', email: 'm.chen@email.com', insurance: 'State Farm — Policy #SF-9928174' },
+    property: { type: 'Single-Family Residential', yearBuilt: 1987, sqft: 2400, stories: 2, bedrooms: 4, bathrooms: 2.5, garage: '2-car attached', lot: '0.35 acres',
+      construction: 'Wood frame, vinyl siding, asphalt shingle roof', foundation: 'Poured concrete basement', hvac: 'Forced air gas furnace, central AC', electrical: '200-amp panel, copper wiring', plumbing: 'Copper supply, PVC drain' },
+    damage: { summary: 'Kitchen fire spread to attic via wall cavity. Significant structural damage to NW quadrant, roof collapse over kitchen/dining area. Smoke damage throughout. Water damage from suppression on both floors.',
+      rooms: ['Kitchen — Total loss, structural collapse','Dining Room — Severe fire & water damage','Master Bedroom (above kitchen) — Floor compromised, heavy smoke','Attic — Partial roof collapse, charred rafters','Living Room — Moderate smoke damage','All rooms — Smoke residue on walls, ceilings, HVAC contaminated'],
+      exterior: 'Siding melted on north face, roof penetration, landscaping scorched 15ft radius' },
+    recovery: { phase: 'Structural Stabilization', crew: 'Team Alpha (6 members)', equipment: ['Industrial dehumidifiers x4','Air scrubbers x6','Temporary roof tarps','Structural shoring lumber','PPE full kits'], estimate: '$185,000 – $220,000', timeline: '14–18 weeks' },
+    layout: { description: 'Colonial-style 2-story with full basement. Main floor: open kitchen/dining, living room, half bath, laundry. Upper floor: master suite with en-suite, 3 bedrooms, full bath. Basement: rec room, utility/mechanical, storage. Attached 2-car garage on east side.',
+      utilities: 'Gas main shutoff: NE corner exterior. Electrical panel: basement east wall. Water main: basement floor, SW corner. Sewer cleanout: south side exterior.' }
+  },
+  {
+    id: 2, address: '1100 Industrial Blvd, Suite 200, Denver, CO 80216', type: 'flood', severity: 'High',
+    status: 'Cleanup Active', reported: '2026-03-12T22:45:00',
+    contact: { name: 'Robert Vasquez', phone: '(303) 555-0287', email: 'r.vasquez@montecorp.com', insurance: 'Hartford Commercial — Policy #HC-44501928' },
+    property: { type: 'Commercial Office Building', yearBuilt: 2001, sqft: 15000, stories: 3, bedrooms: 0, bathrooms: 6, garage: 'Underground parking (40 spaces)', lot: '1.2 acres',
+      construction: 'Steel frame, glass curtain wall, flat EPDM roof', foundation: 'Reinforced concrete slab with underground parking', hvac: 'Rooftop VAV units, building automation system', electrical: '800-amp 3-phase, emergency generator', plumbing: 'Commercial grade copper/PEX, backflow preventers' },
+    damage: { summary: 'Flash flood from Cherry Creek overflow breached underground parking. 4 feet of standing water in parking level, 18 inches on ground floor. Elevator pits flooded. Electrical infrastructure in basement compromised.',
+      rooms: ['Underground Parking — Submerged, 40 vehicles affected','Ground Floor Lobby — 18" waterline, drywall destroyed to 4ft','Ground Floor Office A — Furniture & carpet total loss','Ground Floor Server Room — Equipment submerged, total loss','Elevator Shafts (x2) — Flooded, mechanical damage','Stairwell A — Water damage to ground level'],
+      exterior: 'Landscaping eroded, retaining wall cracked, storm drain backed up' },
+    recovery: { phase: 'Water Extraction & Drying', crew: 'Team Bravo (8 members) + Hazmat (3)', equipment: ['Submersible pumps x6','Industrial dehumidifiers x12','Anti-microbial treatment system','Moisture mapping equipment','Commercial air movers x20'], estimate: '$420,000 – $510,000', timeline: '10–14 weeks' },
+    layout: { description: '3-story commercial office. Underground: parking garage, mechanical/electrical room, elevator equipment. Ground floor: reception lobby, 2 large office suites, server room, restrooms. Floors 2-3: open plan offices with perimeter offices, conference rooms, break rooms.',
+      utilities: 'Electrical vault: underground level NE. Water main shutoff: underground level mechanical room. Gas: rooftop only for heating. Emergency generator: ground level, east exterior pad.' }
+  },
+  {
+    id: 3, address: '8823 Maple Ridge Dr, Austin, TX 78735', type: 'storm', severity: 'Moderate',
+    status: 'Assessment Complete', reported: '2026-03-13T03:30:00',
+    contact: { name: 'Diana Okafor', phone: '(512) 555-0196', email: 'd.okafor@gmail.com', insurance: 'USAA — Policy #UA-77231540' },
+    property: { type: 'Single-Family Residential', yearBuilt: 2015, sqft: 3200, stories: 1, bedrooms: 4, bathrooms: 3, garage: '3-car attached', lot: '0.8 acres',
+      construction: 'ICF walls, stone veneer, standing seam metal roof', foundation: 'Post-tension slab on grade', hvac: 'Dual-zone heat pump, whole-house dehumidifier', electrical: '400-amp panel, solar array (12kW)', plumbing: 'PEX supply, ABS drain, tankless water heater' },
+    damage: { summary: 'Severe hailstorm with 70mph straight-line winds. Roof damage across 40% of surface, 3 skylights shattered, west-facing windows broken. Interior water intrusion in master and great room. Large oak tree fell on garage.',
+      rooms: ['Master Bedroom — Ceiling leak, water damage to flooring','Great Room — Skylight breach, water on hardwood','Garage — Structural impact from fallen tree, 2 vehicles trapped','Kitchen — Minor water intrusion from skylight','Office — Window breach, rain damage to electronics'],
+      exterior: 'Metal roof dented/punctured, 3 skylights destroyed, west windows shattered, oak tree on garage roof, fence down on 2 sides, solar panels (4 of 28) cracked' },
+    recovery: { phase: 'Planning & Scheduling', crew: 'Unassigned — pending scheduling', equipment: ['Tree removal crane','Roofing materials & scaffolding','Window glazing units','Temporary board-up materials','Moisture detection equipment'], estimate: '$95,000 – $130,000', timeline: '8–12 weeks' },
+    layout: { description: 'Single-story modern ranch on hilltop lot. Open floor plan with great room, chef\'s kitchen, dining. Master wing: bedroom, en-suite, walk-in closet, flex room. Guest wing: 3 bedrooms, 2 baths, bonus room. 3-car garage with workshop area. Covered patio wraps south and west.',
+      utilities: 'Electrical panel: garage interior wall. Solar inverter: garage. Water main: front utility easement. Septic system: rear yard NE quadrant. Propane tank: east side, buried.' }
+  },
+  {
+    id: 4, address: '350 Pacific Coast Hwy, Malibu, CA 90265', type: 'fire', severity: 'Critical',
+    status: 'Pending Assessment', reported: '2026-03-13T08:55:00',
+    contact: { name: 'Jonathan Reeves', phone: '(310) 555-0321', email: 'j.reeves@outlook.com', insurance: 'Chubb — Policy #CH-55019283' },
+    property: { type: 'Luxury Residential', yearBuilt: 2010, sqft: 5800, stories: 3, bedrooms: 5, bathrooms: 6, garage: '4-car underground', lot: '1.5 acres',
+      construction: 'Steel and concrete, floor-to-ceiling glass, green roof system', foundation: 'Drilled pier, hillside construction', hvac: 'Geothermal heat pump, zoned radiant floor', electrical: '600-amp panel, Tesla Powerwall array, whole-house generator', plumbing: 'Copper/PEX hybrid, greywater reclamation' },
+    damage: { summary: 'Wildfire approached from canyon. Extreme radiant heat exposure on east facade. Vegetation fire reached structure. Decks and exterior compromised. Interior smoke penetration throughout. Landscape and outbuildings lost.',
+      rooms: ['East Wing Bedrooms (2) — Window failures, fire intrusion','Main Living Pavilion — Heavy smoke, heat warping on glass','Kitchen — Smoke damage, heat damage to appliances','Lower Level — Smoke throughout, pool equipment melted','All Decks — Destroyed, structural attachment points compromised','Guest House — Total loss'],
+      exterior: 'All landscaping destroyed, retaining walls heat-damaged, pool coping cracked, driveway surface bubbled, 200ft of fencing gone' },
+    recovery: { phase: 'Awaiting Access — Active Fire Zone', crew: 'Standby — Team Delta', equipment: ['Hazmat assessment kit','Structural engineering evaluation','Air quality monitoring','Full demolition capability','Hillside stabilization materials'], estimate: '$750,000 – $1,200,000', timeline: '26–40 weeks' },
+    layout: { description: 'Multi-level cantilevered modern over hillside. Top level: entry, great room, kitchen, dining, powder room. Mid level: master suite, 2 bedrooms, media room. Lower level: 2 bedrooms, gym, wine cellar, opens to pool terrace. Underground garage accessed via driveway cut. Separate guest house (destroyed).',
+      utilities: 'Main electrical: underground garage. Generator: lower level mechanical. Geothermal wells: north side. Water: municipal + 5000gal fire suppression tank. Gas: underground vault, east property line.' }
+  },
+  {
+    id: 5, address: '2901 Commerce St, Dallas, TX 75226', type: 'fire', severity: 'High',
+    status: 'Recovery In Progress', reported: '2026-03-12T14:20:00',
+    contact: { name: 'Sarah Kim-Patel', phone: '(214) 555-0178', email: 's.kimpatel@brickoven.com', insurance: 'Travelers — Policy #TV-33847291' },
+    property: { type: 'Commercial Restaurant', yearBuilt: 1955, sqft: 4200, stories: 1, bedrooms: 0, bathrooms: 3, garage: 'None — surface lot', lot: '0.4 acres',
+      construction: 'Load-bearing brick walls, exposed timber ceiling, flat built-up roof', foundation: 'Rubble stone foundation', hvac: 'Rooftop units (2), kitchen hood exhaust system', electrical: '400-amp 3-phase, commercial kitchen circuits', plumbing: 'Grease trap system, commercial dishwasher hookups, floor drains' },
+    damage: { summary: 'Grease fire in kitchen hood system spread to ceiling void and roof structure. Rear 40% of building involved. Roof collapse over kitchen. Fire wall prevented spread to dining room but smoke damage is total throughout. Historic brick facade intact.',
+      rooms: ['Main Kitchen — Total loss, roof collapse','Prep Kitchen — Severe fire and structural damage','Walk-in Cooler/Freezer — Heat damage, contents lost','Dining Room — Heavy smoke, water damage from suppression','Bar Area — Smoke damage, water damage','Restrooms — Smoke, minor water'],
+      exterior: 'Rear wall partial collapse, roof structure exposed, HVAC units destroyed, grease trap area contaminated, rear patio furniture melted' },
+    recovery: { phase: 'Debris Removal & Hazmat Cleanup', crew: 'Team Charlie (5) + Hazmat (2)', equipment: ['Asbestos abatement gear (1955 building)','Structural demolition tools','Commercial kitchen extraction','Grease/chemical cleanup system','Historic masonry preservation tools'], estimate: '$340,000 – $400,000', timeline: '16–22 weeks' },
+    layout: { description: 'Converted 1955 warehouse. Front: main dining (80 seats), full bar, host station, restrooms. Middle: open pass-through kitchen visible to diners. Rear: prep kitchen, walk-in cooler, walk-in freezer, dry storage, office, employee area. Rear patio dining (30 seats). Surface parking lot on south side.',
+      utilities: 'Gas main: south exterior wall (high-capacity for kitchen). Electrical panel: office interior wall. Water: front utility vault. Grease trap: rear exterior, south side. Hood suppression system: kitchen ceiling (deployed during fire).' }
+  },
+  {
+    id: 6, address: '4410 Lakeshore Blvd, Chicago, IL 60613', type: 'flood', severity: 'Moderate',
+    status: 'Cleanup Active', reported: '2026-03-12T18:05:00',
+    contact: { name: 'Thomas Andersen', phone: '(773) 555-0234', email: 't.andersen@proton.me', insurance: 'Allstate — Policy #AS-12045678' },
+    property: { type: 'Multi-Unit Residential (6-flat)', yearBuilt: 1928, sqft: 7200, stories: 3, bedrooms: 12, bathrooms: 6, garage: 'Detached 3-car', lot: '0.25 acres',
+      construction: 'Brick masonry bearing walls, timber floor joists, flat tar/gravel roof', foundation: 'Limestone block basement', hvac: 'Steam boiler (original), window AC units', electrical: '6 separate 100-amp panels, knob-and-tube remnants', plumbing: 'Mixed — cast iron drains, galvanized/copper supply' },
+    damage: { summary: 'Lake Michigan surge combined with storm sewer backup. Basement flooded to ceiling, ground floor units 2ft of water. Boiler and electrical infrastructure submerged. Contents loss in 2 ground-floor units. Mold growth detected within 48hrs.',
+      rooms: ['Basement — Complete submersion, boiler/mechanicals destroyed','Unit 1 (Ground Floor) — 2ft waterline, total contents loss','Unit 2 (Ground Floor) — 2ft waterline, total contents loss','Unit 3 (2nd Floor) — No direct damage, no heat/hot water','Unit 4 (2nd Floor) — No direct damage, no heat/hot water','Unit 5-6 (3rd Floor) — No direct damage, no utilities'],
+      exterior: 'Basement window wells collapsed inward, foundation mortar deterioration, gangway flooding, garage floor cracked from hydrostatic pressure' },
+    recovery: { phase: 'Mold Remediation & Mechanical Replacement', crew: 'Team Echo (4) + Mold Specialists (3)', equipment: ['HEPA air filtration x8','Anti-microbial fogging system','Boiler replacement materials','Sump pump installation kit','Foundation waterproofing system'], estimate: '$210,000 – $275,000', timeline: '12–16 weeks' },
+    layout: { description: 'Classic Chicago 6-flat, 2 units per floor. Each unit: living room, dining room, kitchen, 2 bedrooms, 1 bath. Basement: boiler room, laundry, storage lockers (per unit), utility room. Front and rear stairs. Detached garage at rear alley.',
+      utilities: 'Gas meter bank: east exterior wall. Electrical meters: basement (currently offline). Water main: basement front wall. Sewer: basement rear, backflow preventer failed. Boiler: basement center (destroyed, pending replacement).' }
+  },
+  {
+    id: 7, address: '15 Orchard Hill Rd, Montecito, CA 93108', type: 'earthquake', severity: 'High',
+    status: 'Assessment Complete', reported: '2026-03-13T05:48:00',
+    contact: { name: 'Elena Marchetti', phone: '(805) 555-0399', email: 'e.marchetti@sbnet.com', insurance: 'CEA / Fireman\'s Fund — Policy #FF-88012345' },
+    property: { type: 'Single-Family Residential', yearBuilt: 1972, sqft: 3800, stories: 2, bedrooms: 5, bathrooms: 3.5, garage: '2-car attached', lot: '2.1 acres',
+      construction: 'Unreinforced masonry, stucco exterior, clay tile roof', foundation: 'Hillside stepped foundation, partial crawlspace', hvac: 'Central forced air, mini-splits in addition', electrical: '200-amp panel, partial knob-and-tube in original wing', plumbing: 'Copper supply, ABS drain, well water + municipal' },
+    damage: { summary: '5.2 magnitude quake, epicenter 8 miles NE. Significant cracking in unreinforced masonry walls. Chimney collapsed through roof into living room. Foundation shifted 2 inches on downhill side. Retaining wall failure on east slope.',
+      rooms: ['Living Room — Chimney collapse through ceiling, debris field','Kitchen — Cabinet failures, gas line stress fracture detected','Master Bathroom — Tile failure, plumbing joint separation','Foundation — 2" lateral shift, crawlspace access blocked','Guest Room (NE corner) — Major wall cracking, unsafe','Garage — Door frame racked, inoperable'],
+      exterior: 'Chimney destroyed, clay tile displacement on 30% of roof, east retaining wall collapsed, driveway cracked, pool decking separated' },
+    recovery: { phase: 'Structural Engineering Review', crew: 'Pending structural clearance', equipment: ['Seismic bracing/shoring materials','Foundation repair jacks','Masonry restoration materials','Temporary weatherproofing','Soil stabilization equipment'], estimate: '$280,000 – $360,000', timeline: '18–24 weeks' },
+    layout: { description: 'Spanish Colonial Revival on terraced hillside. Main level: foyer, living room with fireplace (chimney collapsed), formal dining, kitchen, breakfast nook, powder room, study. Upper level: master suite, 3 bedrooms, 2 baths, laundry. Lower level (hillside): guest suite with separate entry, storage. Courtyard entry with fountain.',
+      utilities: 'Gas shutoff: south exterior (auto-seismic valve installed). Electrical: garage wall. Well pump: east hillside. Municipal water: street frontage. Septic: lower terrace west side.' }
+  },
+  {
+    id: 8, address: '6200 Tornado Alley Rd, Moore, OK 73160', type: 'tornado', severity: 'Critical',
+    status: 'Pending Assessment', reported: '2026-03-13T09:15:00',
+    contact: { name: 'James & Linda Whitfield', phone: '(405) 555-0512', email: 'whitfield.family@yahoo.com', insurance: 'Oklahoma Farm Bureau — Policy #OFB-20198734' },
+    property: { type: 'Single-Family Residential + Workshop', yearBuilt: 1998, sqft: 2800, stories: 1, bedrooms: 3, bathrooms: 2, garage: 'Attached 2-car + detached 30x40 workshop', lot: '3 acres',
+      construction: 'Wood frame, brick veneer, dimensional shingle roof', foundation: 'Slab on grade with storm shelter', hvac: 'Heat pump with gas backup, ductwork in attic', electrical: '200-amp panel, workshop sub-panel (100-amp)', plumbing: 'PEX supply, PVC drain, well water with pressure tank' },
+    damage: { summary: 'EF-3 tornado direct hit. Roof removed entirely from main structure. Interior walls standing to 4ft in most areas. Workshop destroyed — slab only remaining. Vehicles displaced. Debris field extends 500+ yards. Storm shelter intact — occupants safe.',
+      rooms: ['All Rooms — Roof gone, walls partially standing','Kitchen — Appliances displaced, cabinetry destroyed','Master Bedroom — Exterior wall failure, contents scattered','Living Room — Roof and ceiling gone, furniture displaced','Workshop — Complete destruction, equipment missing/destroyed','Storm Shelter — Intact, functioned as designed'],
+      exterior: 'Complete roof loss, brick veneer stripped on 3 sides, trees uprooted, well pump house destroyed, septic exposed, driveway blocked by debris' },
+    recovery: { phase: 'Search & Salvage', crew: 'Team Foxtrot (8) + Volunteers (12)', equipment: ['Heavy debris removal equipment','Crane for structural members','Portable generators x3','Chainsaw teams','Temporary fencing for site security'], estimate: '$310,000 – $385,000 (house) + $120,000 (workshop)', timeline: '24–32 weeks' },
+    layout: { description: 'Ranch-style home with attached garage on large rural lot. Main house: open living/kitchen/dining, 3 bedrooms down central hall, 2 baths, laundry room, attached garage. In-ground storm shelter accessed from garage floor. Detached metal workshop (30x40) with concrete floor, overhead doors, vehicle lift. Gravel driveway, 200ft from road.',
+      utilities: 'Well: east of house (pump house destroyed). Electrical: meter on east exterior (service line down). Propane: 500gal buried tank, NW of house. Septic: south of house, 50ft (tank lid exposed by tornado).' }
+  }
+];
+
+// ─── STATE ──────────────────────────────────────────────────────────────
+let currentFilter = 'all';
+
+// ─── TIME DISPLAY ───────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  document.getElementById('currentTime').textContent = now.toLocaleTimeString('en-US', { hour12: false });
+  document.getElementById('currentDate').textContent = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ─── HELPERS ────────────────────────────────────────────────────────────
+function timeAgo(dateStr) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ${mins%60}m ago`;
+  return `${Math.floor(hrs/24)}d ago`;
+}
+
+function severityColor(sev) {
+  return { Critical: 'bg-red-500', High: 'bg-orange-500', Moderate: 'bg-yellow-500', Low: 'bg-emerald-500' }[sev] || 'bg-slate-500';
+}
+
+function severityTextColor(sev) {
+  return { Critical: 'text-red-400', High: 'text-orange-400', Moderate: 'text-yellow-400', Low: 'text-emerald-400' }[sev] || 'text-slate-400';
+}
+
+function typeTag(type) {
+  const labels = { fire:'🔥 Fire', flood:'🌊 Flood', storm:'⛈ Storm', earthquake:'🌍 Quake', tornado:'🌪 Tornado' };
+  return `<span class="tag-${type} text-[10px] font-mono px-2 py-0.5 rounded-md inline-flex items-center gap-1">${labels[type]||type}</span>`;
+}
+
+function statusBadge(status) {
+  const colors = {
+    'Pending Assessment': 'bg-amber-500/15 text-amber-400 border-amber-500/25',
+    'Assessment Complete': 'bg-blue-500/15 text-blue-400 border-blue-500/25',
+    'Recovery In Progress': 'bg-ember-500/15 text-ember-400 border-ember-500/25',
+    'Cleanup Active': 'bg-purple-500/15 text-purple-400 border-purple-500/25',
+    'Restoration Underway': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
+    'Monitoring': 'bg-slate-500/15 text-slate-400 border-slate-500/25'
+  };
+  const c = colors[status] || colors['Monitoring'];
+  return `<span class="text-[10px] font-mono px-2 py-0.5 rounded-md border ${c}">${status}</span>`;
+}
+
+// ─── RENDER TABLE ───────────────────────────────────────────────────────
+function renderTable() {
+  const filtered = currentFilter === 'all' ? PROPERTIES : PROPERTIES.filter(p => p.type === currentFilter);
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const data = filtered.filter(p =>
+    p.address.toLowerCase().includes(search) ||
+    p.contact.name.toLowerCase().includes(search) ||
+    p.type.toLowerCase().includes(search)
+  );
+
+  document.getElementById('statActive').textContent = PROPERTIES.filter(p => p.severity === 'Critical' || p.severity === 'High').length;
+  document.getElementById('statProperties').textContent = PROPERTIES.length;
+  document.getElementById('statOps').textContent = PROPERTIES.filter(p => p.status.includes('Progress') || p.status.includes('Active') || p.status.includes('Underway')).length;
+
+  const tbody = document.getElementById('propertyTable');
+  tbody.innerHTML = data.map(p => `
+    <tr class="border-b border-slate-800/30 hover:bg-slate-800/30 cursor-pointer transition-colors" onclick="openModal(${p.id})">
+      <td class="px-5 py-3">
+        <div class="flex items-center gap-2">
+          <div class="w-2.5 h-2.5 rounded-full ${severityColor(p.severity)} ${p.severity==='Critical'?'severity-critical':''}"></div>
+          <span class="text-xs font-mono ${severityTextColor(p.severity)}">${p.severity}</span>
+        </div>
+      </td>
+      <td class="px-5 py-3">
+        <div class="text-sm text-slate-200 font-medium hover:text-ember-400 transition-colors">${p.address.split(',')[0]}</div>
+        <div class="text-[10px] font-mono text-slate-500">${p.address.split(',').slice(1).join(',').trim()}</div>
+      </td>
+      <td class="px-5 py-3">${typeTag(p.type)}</td>
+      <td class="px-5 py-3 text-xs text-slate-400">${p.contact.name}</td>
+      <td class="px-5 py-3">${statusBadge(p.status)}</td>
+      <td class="px-5 py-3 text-[10px] font-mono text-slate-500">${timeAgo(p.reported)}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('feedCount').textContent = `${data.length} active`;
+}
+
+// ─── FILTER ─────────────────────────────────────────────────────────────
+function filterBy(type) {
+  currentFilter = type;
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    const isActive = btn.dataset.filter === type;
+    btn.className = `filter-btn text-[10px] font-mono px-3 py-1 rounded-md transition ${isActive ? 'bg-slate-800 text-slate-300' : 'bg-slate-800/50 text-slate-500 hover:bg-slate-700'}`;
+  });
+  renderTable();
+}
+
+// ─── LIVE FEED ──────────────────────────────────────────────────────────
+function renderFeed() {
+  const feed = document.getElementById('liveFeed');
+  const sorted = [...PROPERTIES].sort((a,b) => new Date(b.reported) - new Date(a.reported));
+  feed.innerHTML = sorted.map((p, i) => `
+    <div class="feed-enter bg-slate-900/60 border border-slate-800/50 rounded-lg p-3 cursor-pointer card-hover" onclick="openModal(${p.id})" style="animation-delay:${i*80}ms">
+      <div class="flex items-start justify-between mb-1.5">
+        <div class="flex items-center gap-1.5">
+          <div class="w-2 h-2 rounded-full ${severityColor(p.severity)} ${p.severity==='Critical'?'severity-critical':''}"></div>
+          ${typeTag(p.type)}
+        </div>
+        <span class="text-[9px] font-mono text-slate-600">${timeAgo(p.reported)}</span>
+      </div>
+      <div class="text-xs text-slate-300 font-medium mb-1 leading-snug">${p.address.split(',')[0]}</div>
+      <div class="text-[10px] text-slate-500 leading-relaxed line-clamp-2">${p.damage.summary.substring(0,100)}...</div>
+      <div class="mt-2 flex items-center justify-between">
+        ${statusBadge(p.status)}
+        <span class="text-[9px] font-mono text-slate-600">${p.contact.name.split(' ')[1]}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ─── SEVERITY BARS ──────────────────────────────────────────────────────
+function renderSeverityBars() {
+  const counts = {};
+  SEVERITY.forEach(s => counts[s] = PROPERTIES.filter(p => p.severity === s).length);
+  const max = Math.max(...Object.values(counts), 1);
+  const container = document.getElementById('severityBars');
+  container.innerHTML = SEVERITY.map(s => {
+    const pct = (counts[s] / max) * 100;
+    const color = { Critical:'from-red-600 to-red-400', High:'from-orange-600 to-orange-400', Moderate:'from-yellow-600 to-yellow-400', Low:'from-emerald-600 to-emerald-400' }[s];
+    return `
+      <div>
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs ${severityTextColor(s)} font-medium">${s}</span>
+          <span class="text-xs font-mono text-slate-500">${counts[s]} propert${counts[s]===1?'y':'ies'}</span>
+        </div>
+        <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+          <div class="h-full rounded-full bg-gradient-to-r ${color} transition-all duration-1000" style="width:${pct}%"></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// ─── ACTIVITY LOG ───────────────────────────────────────────────────────
+function renderActivityLog() {
+  const activities = [
+    { time: '09:22', text: 'Tornado damage report filed — 6200 Tornado Alley Rd', icon: '🌪', color: 'border-teal-500' },
+    { time: '08:55', text: 'Wildfire assessment requested — 350 Pacific Coast Hwy', icon: '🔥', color: 'border-red-500' },
+    { time: '07:30', text: 'Mold remediation started — 4410 Lakeshore Blvd', icon: '🔬', color: 'border-purple-500' },
+    { time: '06:45', text: 'Structural engineer dispatched — 15 Orchard Hill Rd', icon: '🏗', color: 'border-yellow-500' },
+    { time: '06:12', text: 'Kitchen fire — 742 Evergreen Terrace escalated to Critical', icon: '🚨', color: 'border-red-500' },
+    { time: '05:00', text: 'Team Charlie began debris removal — 2901 Commerce St', icon: '🔧', color: 'border-orange-500' },
+    { time: '03:30', text: 'Storm damage reported — 8823 Maple Ridge Dr', icon: '⛈', color: 'border-blue-500' },
+    { time: '22:45', text: 'Flash flood alert — 1100 Industrial Blvd, pumps deployed', icon: '🌊', color: 'border-blue-500' },
+  ];
+  const container = document.getElementById('activityLog');
+  container.innerHTML = activities.map(a => `
+    <div class="flex items-start gap-3">
+      <div class="flex flex-col items-center">
+        <span class="text-[10px] font-mono text-slate-500 w-10 text-right">${a.time}</span>
+      </div>
+      <div class="w-px h-8 bg-slate-800 relative">
+        <div class="absolute top-1 -left-[3px] w-2 h-2 rounded-full border-2 ${a.color} bg-slate-900"></div>
+      </div>
+      <div class="text-xs text-slate-400 leading-relaxed pt-0.5">${a.icon} ${a.text}</div>
+    </div>
+  `).join('');
+}
+
+// ─── MODAL ──────────────────────────────────────────────────────────────
+function openModal(id) {
+  const p = PROPERTIES.find(x => x.id === id);
+  if (!p) return;
+
+  const modal = document.getElementById('modal');
+  const content = document.getElementById('modalContent');
+
+  content.innerHTML = `
+    <div class="sticky top-0 z-10 bg-slate-900/95 backdrop-blur-sm border-b border-slate-800/60 px-6 py-4 flex items-start justify-between rounded-t-2xl">
+      <div>
+        <div class="flex items-center gap-2 mb-1">
+          <div class="w-3 h-3 rounded-full ${severityColor(p.severity)} ${p.severity==='Critical'?'severity-critical':''}"></div>
+          ${typeTag(p.type)}
+          ${statusBadge(p.status)}
+        </div>
+        <h2 class="text-lg font-bold text-white">${p.address.split(',')[0]}</h2>
+        <p class="text-xs font-mono text-slate-500">${p.address.split(',').slice(1).join(',').trim()}</p>
+      </div>
+      <button onclick="closeModal()" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center transition text-slate-400 hover:text-white">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="p-6 space-y-6">
+
+      <!-- CONTACT & RECOVERY OVERVIEW -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Contact -->
+        <div class="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+          <h3 class="text-[10px] font-mono text-ember-400 tracking-widest uppercase mb-3 flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0"/></svg>
+            Primary Contact
+          </h3>
+          <div class="space-y-2">
+            <div class="text-base font-semibold text-white">${p.contact.name}</div>
+            <div class="flex items-center gap-2 text-xs text-slate-400">
+              <svg class="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z"/></svg>
+              ${p.contact.phone}
+            </div>
+            <div class="flex items-center gap-2 text-xs text-slate-400">
+              <svg class="w-3 h-3 text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/></svg>
+              ${p.contact.email}
+            </div>
+            <div class="mt-2 pt-2 border-t border-slate-700/50">
+              <div class="text-[10px] font-mono text-slate-500 mb-0.5">Insurance</div>
+              <div class="text-xs text-slate-300">${p.contact.insurance}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recovery Status -->
+        <div class="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+          <h3 class="text-[10px] font-mono text-ember-400 tracking-widest uppercase mb-3 flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17l-5.384 3.175A1.125 1.125 0 014.75 17.303V5.697a1.125 1.125 0 011.286-1.042l5.384 3.175m0 0l5.384-3.175A1.125 1.125 0 0118.09 5.697v11.606a1.125 1.125 0 01-1.286 1.042L11.42 15.17z"/></svg>
+            Recovery Operation
+          </h3>
+          <div class="space-y-2.5">
+            <div>
+              <div class="text-[10px] font-mono text-slate-500 mb-0.5">Current Phase</div>
+              <div class="text-sm font-semibold text-white">${p.recovery.phase}</div>
+            </div>
+            <div>
+              <div class="text-[10px] font-mono text-slate-500 mb-0.5">Assigned Crew</div>
+              <div class="text-xs text-slate-300">${p.recovery.crew}</div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <div class="text-[10px] font-mono text-slate-500 mb-0.5">Est. Cost</div>
+                <div class="text-xs text-emerald-400 font-mono font-medium">${p.recovery.estimate}</div>
+              </div>
+              <div>
+                <div class="text-[10px] font-mono text-slate-500 mb-0.5">Timeline</div>
+                <div class="text-xs text-blue-400 font-mono font-medium">${p.recovery.timeline}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PROPERTY DETAILS -->
+      <div class="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+        <h3 class="text-[10px] font-mono text-ember-400 tracking-widest uppercase mb-3 flex items-center gap-2">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 21v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21m0 0h4.5V3.545M12.75 21h7.5V10.75M2.25 21h1.5m18 0h-18M2.25 9l4.5-1.636M18.75 3l-1.5.545m0 6.205l3 1m1.5.5l-1.5-.5M6.75 7.364V3h-3v18m3-13.636l10.5-3.819"/></svg>
+          Property Description & Architecture
+        </h3>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+          ${[
+            ['Type', p.property.type],
+            ['Year Built', p.property.yearBuilt],
+            ['Sq Ft', p.property.sqft.toLocaleString()],
+            ['Stories', p.property.stories],
+            ['Beds', p.property.bedrooms],
+            ['Baths', p.property.bathrooms],
+            ['Garage', p.property.garage],
+            ['Lot', p.property.lot],
+          ].map(([label, val]) => `
+            <div class="bg-slate-900/50 rounded-lg p-2.5">
+              <div class="text-[9px] font-mono text-slate-500 uppercase tracking-wider">${label}</div>
+              <div class="text-xs text-slate-200 font-medium mt-0.5">${val}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="space-y-2.5 text-xs">
+          ${[
+            ['Construction', p.property.construction],
+            ['Foundation', p.property.foundation],
+            ['HVAC', p.property.hvac],
+            ['Electrical', p.property.electrical],
+            ['Plumbing', p.property.plumbing],
+          ].map(([label, val]) => `
+            <div class="flex gap-3">
+              <span class="text-slate-500 font-mono text-[10px] uppercase tracking-wider w-24 flex-shrink-0 pt-0.5">${label}</span>
+              <span class="text-slate-300">${val}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- LAYOUT & UTILITIES -->
+      <div class="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+        <h3 class="text-[10px] font-mono text-ember-400 tracking-widest uppercase mb-3 flex items-center gap-2">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z"/></svg>
+          Layout & Utility Access
+        </h3>
+        <div class="space-y-3 text-xs">
+          <div>
+            <div class="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Layout Description</div>
+            <div class="text-slate-300 leading-relaxed">${p.layout.description}</div>
+          </div>
+          <div>
+            <div class="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Utility Shutoff Locations</div>
+            <div class="text-slate-300 leading-relaxed">${p.layout.utilities}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DAMAGE ASSESSMENT -->
+      <div class="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+        <h3 class="text-[10px] font-mono text-red-400 tracking-widest uppercase mb-3 flex items-center gap-2">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z"/></svg>
+          Damage Assessment
+        </h3>
+        <div class="text-xs text-slate-300 leading-relaxed mb-3">${p.damage.summary}</div>
+        <div class="space-y-1.5">
+          <div class="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Room-by-Room</div>
+          ${p.damage.rooms.map(r => {
+            const isSevere = r.toLowerCase().includes('total loss') || r.toLowerCase().includes('collapse') || r.toLowerCase().includes('destroyed') || r.toLowerCase().includes('submerged');
+            return `<div class="flex items-start gap-2 text-xs ${isSevere ? 'text-red-300' : 'text-slate-400'}">
+              <span class="mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${isSevere ? 'bg-red-500' : 'bg-slate-600'}"></span>
+              ${r}
+            </div>`;
+          }).join('')}
+          <div class="mt-2 pt-2 border-t border-slate-700/50">
+            <div class="text-[10px] font-mono text-slate-500 uppercase tracking-wider mb-1">Exterior</div>
+            <div class="text-xs text-slate-400">${p.damage.exterior}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- EQUIPMENT NEEDED -->
+      <div class="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+        <h3 class="text-[10px] font-mono text-ember-400 tracking-widest uppercase mb-3 flex items-center gap-2">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17l-5.384 3.175A1.125 1.125 0 014.75 17.303V5.697a1.125 1.125 0 011.286-1.042l5.384 3.175m0 0l5.384-3.175A1.125 1.125 0 0118.09 5.697v11.606a1.125 1.125 0 01-1.286 1.042L11.42 15.17z"/></svg>
+          Required Equipment
+        </h3>
+        <div class="flex flex-wrap gap-2">
+          ${p.recovery.equipment.map(e => `
+            <span class="text-[10px] font-mono bg-slate-900/80 text-slate-300 px-2.5 py-1 rounded-md border border-slate-700/50">${e}</span>
+          `).join('')}
+        </div>
+      </div>
+
+    </div>
+  `;
+
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+}
+
+function closeModal() {
+  const modal = document.getElementById('modal');
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ─── SEARCH ─────────────────────────────────────────────────────────────
+document.getElementById('searchInput').addEventListener('input', renderTable);
+
+// ─── INIT ───────────────────────────────────────────────────────────────
+renderTable();
+renderFeed();
+renderSeverityBars();
+renderActivityLog();
+
+// Simulate new feed entries
+let feedPulseInterval = setInterval(() => {
+  const randomProp = PROPERTIES[Math.floor(Math.random() * PROPERTIES.length)];
+  const firstCard = document.querySelector('#liveFeed > div:first-child');
+  if (firstCard) {
+    firstCard.style.borderColor = 'rgba(249,115,22,0.3)';
+    setTimeout(() => { firstCard.style.borderColor = ''; }, 1500);
+  }
+}, 8000);
+</script>
+</body>
+</html>
